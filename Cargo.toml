@@ -12,6 +12,8 @@ winit = "0.29"
 wgpu = "0.19"
 image = "0.24"
 pollster = "0.3"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = "0.14"
 
 [build-dependencies]
