@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use winit::{
     event::{Event, KeyEvent, WindowEvent, MouseButton, ElementState},
@@ -7,6 +7,7 @@ use winit::{
     window::{WindowBuilder, Icon},
     dpi::PhysicalPosition,
 };
+#[cfg(not(target_os = "linux"))]
 use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, MenuEvent}, TrayIconEvent};
 use std::sync::{Arc, Mutex};
 
@@ -38,18 +39,25 @@ fn main() {
     let last_time = Arc::new(Mutex::new(std::time::Instant::now()));
 
     
+    #[cfg(not(target_os = "linux"))]
     let quit_item = MenuItem::new("Quit", true, None);
+    #[cfg(not(target_os = "linux"))]
     let menu = Menu::new();
+    #[cfg(not(target_os = "linux"))]
     menu.append(&quit_item).unwrap();
     
+    #[cfg(not(target_os = "linux"))]
     let _tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_icon(tray_icon::Icon::from_rgba(icon_img.into_raw(), 32, 32).unwrap())
         .build()
         .unwrap();
     
+    #[cfg(not(target_os = "linux"))]
     let menu_channel = TrayIconEvent::receiver();
+    #[cfg(not(target_os = "linux"))]
     let menu_event_channel = MenuEvent::receiver();
+    #[cfg(not(target_os = "linux"))]
     let quit_id = quit_item.id();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
@@ -179,6 +187,7 @@ fn main() {
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);
         
+        #[cfg(not(target_os = "linux"))]
         if let Ok(event) = menu_channel.try_recv() {
             if let TrayIconEvent::Click { .. } = event {
                 let mut vis = visible.lock().unwrap();
@@ -193,6 +202,7 @@ fn main() {
             }
         }
         
+        #[cfg(not(target_os = "linux"))]
         if let Ok(event) = menu_event_channel.try_recv() {
             if event.id == quit_id {
                 elwt.exit();
