@@ -1,26 +1,30 @@
 #![windows_subsystem = "windows"]
 
+use std::sync::{Arc, Mutex};
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem},
+    TrayIconBuilder, TrayIconEvent,
+};
 use winit::{
+    dpi::PhysicalPosition,
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{Key, NamedKey},
-    window::{WindowBuilder, Icon},
-    dpi::PhysicalPosition,
+    window::{Icon, WindowBuilder},
 };
-use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, MenuEvent}, TrayIconEvent};
-use std::sync::{Arc, Mutex};
-
 
 include!(concat!(env!("OUT_DIR"), "/squirrel_data.rs"));
 
 fn main() {
     let img = image::load_from_memory(SQUIRREL_PNG).unwrap();
     let (width, height) = (img.width(), img.height());
-    
+
     let event_loop = EventLoop::new().unwrap();
-    let icon_img = img.resize(32, 32, image::imageops::FilterType::Lanczos3).to_rgba8();
+    let icon_img = img
+        .resize(32, 32, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
     let icon = Icon::from_rgba(icon_img.clone().into_raw(), 32, 32).unwrap();
-    
+
     let window = WindowBuilder::new()
         .with_inner_size(winit::dpi::PhysicalSize::new(width * 3 / 4, height * 3 / 4))
         .with_decorations(false)
@@ -29,40 +33,42 @@ fn main() {
         .build(&event_loop)
         .unwrap();
     window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
-    
+
     let visible = Arc::new(Mutex::new(true));
     let bouncing = Arc::new(Mutex::new(false));
     let velocity = Arc::new(Mutex::new((2.0, 2.0)));
     let last_time = Arc::new(Mutex::new(std::time::Instant::now()));
     let _ram_hog = vec![0_u8; 128 * 1024 * 1024];
 
-    
     let quit_item = MenuItem::new("Quit", true, None);
     let menu = Menu::new();
     menu.append(&quit_item).unwrap();
-    
+
     let _tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_icon(tray_icon::Icon::from_rgba(icon_img.into_raw(), 32, 32).unwrap())
         .build()
         .unwrap();
-    
+
     let menu_channel = TrayIconEvent::receiver();
     let menu_event_channel = MenuEvent::receiver();
     let quit_id = quit_item.id();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-    let surface = unsafe { instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(&window).unwrap()) }.unwrap();
+    let surface = unsafe {
+        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(&window).unwrap())
+    }
+    .unwrap();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::default(),
         compatible_surface: Some(&surface),
         force_fallback_adapter: false,
-    })).unwrap();
+    }))
+    .unwrap();
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor::default(),
-        None,
-    )).unwrap();
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
 
     let surface_caps = surface.get_capabilities(&adapter);
     let surface_format = surface_caps.formats[0];
@@ -79,7 +85,11 @@ fn main() {
     surface.configure(&device, &config);
 
     let img_rgba = img.to_rgba8();
-    let texture_size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    let texture_size = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         size: texture_size,
         mip_level_count: 1,
@@ -140,8 +150,14 @@ fn main() {
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &bind_group_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&texture_view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
         ],
         label: None,
     });
@@ -175,121 +191,160 @@ fn main() {
         multiview: None,
     });
 
-    event_loop.run(move |event, elwt| {
-        elwt.set_control_flow(ControlFlow::Poll);
-        
-        if let Ok(event) = menu_channel.try_recv() {
-            if let TrayIconEvent::Click { .. } = event {
-                let mut vis = visible.lock().unwrap();
-                *vis = !*vis;
-                if *vis {
-                    window.set_visible(true);
-                    window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
-                    window.focus_window();
-                } else {
-                    window.set_visible(false);
+    event_loop
+        .run(move |event, elwt| {
+            elwt.set_control_flow(ControlFlow::Poll);
+
+            if let Ok(event) = menu_channel.try_recv() {
+                if let TrayIconEvent::Click { .. } = event {
+                    let mut vis = visible.lock().unwrap();
+                    *vis = !*vis;
+                    if *vis {
+                        window.set_visible(true);
+                        window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
+                        window.focus_window();
+                    } else {
+                        window.set_visible(false);
+                    }
                 }
             }
-        }
-        
-        if let Ok(event) = menu_event_channel.try_recv() {
-            if event.id == quit_id {
-                elwt.exit();
-                return;
-            }
-        }
-        
-        match event {
-            Event::WindowEvent { event: WindowEvent::KeyboardInput { event: KeyEvent { logical_key: Key::Named(NamedKey::F9), state: ElementState::Pressed, .. }, .. }, .. } => {
-                let mut vis = visible.lock().unwrap();
-                *vis = !*vis;
-                if *vis {
-                    window.set_visible(true);
-                    window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
-                    window.focus_window();
-                } else {
-                    window.set_visible(false);
+
+            if let Ok(event) = menu_event_channel.try_recv() {
+                if event.id == quit_id {
+                    elwt.exit();
+                    return;
                 }
-            },
-            Event::WindowEvent { event: WindowEvent::KeyboardInput { event: KeyEvent { logical_key, state: ElementState::Pressed, .. }, .. }, .. } => {
-                match logical_key {
+            }
+
+            match event {
+                Event::WindowEvent {
+                    event:
+                        WindowEvent::KeyboardInput {
+                            event:
+                                KeyEvent {
+                                    logical_key: Key::Named(NamedKey::F9),
+                                    state: ElementState::Pressed,
+                                    ..
+                                },
+                            ..
+                        },
+                    ..
+                } => {
+                    let mut vis = visible.lock().unwrap();
+                    *vis = !*vis;
+                    if *vis {
+                        window.set_visible(true);
+                        window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
+                        window.focus_window();
+                    } else {
+                        window.set_visible(false);
+                    }
+                }
+                Event::WindowEvent {
+                    event:
+                        WindowEvent::KeyboardInput {
+                            event:
+                                KeyEvent {
+                                    logical_key,
+                                    state: ElementState::Pressed,
+                                    ..
+                                },
+                            ..
+                        },
+                    ..
+                } => match logical_key {
                     Key::Character(c) if c == "d" => {
                         let mut bounce = bouncing.lock().unwrap();
                         *bounce = !*bounce;
                         *last_time.lock().unwrap() = std::time::Instant::now();
-                    },
+                    }
                     _ => {}
-                }
-            },
-            Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
-                if *visible.lock().unwrap() {
-                    let output = surface.get_current_texture().unwrap();
-                    let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                    {
-                        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: None,
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &view,
-                                resolve_target: None,
-                                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                        });
-                        render_pass.set_pipeline(&render_pipeline);
-                        render_pass.set_bind_group(0, &bind_group, &[]);
-                        render_pass.draw(0..6, 0..1);
-                    }
-                    queue.submit(std::iter::once(encoder.finish()));
-                    output.present();
-                }
-            }
-            Event::AboutToWait => {
-                if *visible.lock().unwrap() {
-                    if *bouncing.lock().unwrap() {
-                        let now = std::time::Instant::now();
-                        let mut last = last_time.lock().unwrap();
-                        let dt = now.duration_since(*last).as_secs_f64();
-                        *last = now;
-                        
-                        if let Ok(pos) = window.outer_position() {
-                            let mut vel = velocity.lock().unwrap();
-                            let Some(monitor_size) = window
-                                .current_monitor()
-                                .or_else(|| window.primary_monitor())
-                                .map(|monitor| monitor.size())
-                            else {
-                                return;
-                            };
-                            let screen_width = monitor_size.width as f64;
-                            let screen_height = monitor_size.height as f64;
-                            let win_size = window.outer_size();
-                            let win_width = win_size.width as f64;
-                            let win_height = win_size.height as f64;
-                            let max_x = (screen_width - win_width).max(0.0);
-                            let max_y = (screen_height - win_height).max(0.0);
-                            
-                            let mut new_x = pos.x as f64 + vel.0 * dt * 60.0;
-                            let mut new_y = pos.y as f64 + vel.1 * dt * 60.0;
-                            
-                            if new_x <= 0.0 || new_x >= max_x {
-                                vel.0 = -vel.0;
-                                new_x = new_x.clamp(0.0, max_x);
-                            }
-                            if new_y <= 0.0 || new_y >= max_y {
-                                vel.1 = -vel.1;
-                                new_y = new_y.clamp(0.0, max_y);
-                            }
-                            
-                            window.set_outer_position(PhysicalPosition::new(new_x as i32, new_y as i32));
+                },
+                Event::WindowEvent {
+                    event: WindowEvent::RedrawRequested,
+                    ..
+                } => {
+                    if *visible.lock().unwrap() {
+                        let output = surface.get_current_texture().unwrap();
+                        let view = output
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+                        let mut encoder =
+                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: None,
+                            });
+                        {
+                            let mut render_pass =
+                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                    label: None,
+                                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                        view: &view,
+                                        resolve_target: None,
+                                        ops: wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                            store: wgpu::StoreOp::Store,
+                                        },
+                                    })],
+                                    depth_stencil_attachment: None,
+                                    timestamp_writes: None,
+                                    occlusion_query_set: None,
+                                });
+                            render_pass.set_pipeline(&render_pipeline);
+                            render_pass.set_bind_group(0, &bind_group, &[]);
+                            render_pass.draw(0..6, 0..1);
                         }
+                        queue.submit(std::iter::once(encoder.finish()));
+                        output.present();
                     }
-                    window.request_redraw();
                 }
-            },
-            _ => {}
-        }
-    }).unwrap();
+                Event::AboutToWait => {
+                    if *visible.lock().unwrap() {
+                        if *bouncing.lock().unwrap() {
+                            let now = std::time::Instant::now();
+                            let mut last = last_time.lock().unwrap();
+                            let dt = now.duration_since(*last).as_secs_f64();
+                            *last = now;
+
+                            if let Ok(pos) = window.outer_position() {
+                                let mut vel = velocity.lock().unwrap();
+                                let Some(monitor_size) = window
+                                    .current_monitor()
+                                    .or_else(|| window.primary_monitor())
+                                    .map(|monitor| monitor.size())
+                                else {
+                                    return;
+                                };
+                                let screen_width = monitor_size.width as f64;
+                                let screen_height = monitor_size.height as f64;
+                                let win_size = window.outer_size();
+                                let win_width = win_size.width as f64;
+                                let win_height = win_size.height as f64;
+                                let max_x = (screen_width - win_width).max(0.0);
+                                let max_y = (screen_height - win_height).max(0.0);
+
+                                let mut new_x = pos.x as f64 + vel.0 * dt * 60.0;
+                                let mut new_y = pos.y as f64 + vel.1 * dt * 60.0;
+
+                                if new_x <= 0.0 || new_x >= max_x {
+                                    vel.0 = -vel.0;
+                                    new_x = new_x.clamp(0.0, max_x);
+                                }
+                                if new_y <= 0.0 || new_y >= max_y {
+                                    vel.1 = -vel.1;
+                                    new_y = new_y.clamp(0.0, max_y);
+                                }
+
+                                window.set_outer_position(PhysicalPosition::new(
+                                    new_x as i32,
+                                    new_y as i32,
+                                ));
+                            }
+                        }
+                        window.request_redraw();
+                    }
+                }
+                _ => {}
+            }
+        })
+        .unwrap();
 }
