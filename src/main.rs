@@ -38,7 +38,7 @@ fn main() {
     let bouncing = Arc::new(Mutex::new(false));
     let velocity = Arc::new(Mutex::new((2.0, 2.0)));
     let last_time = Arc::new(Mutex::new(std::time::Instant::now()));
-    let _ram_hog = vec![0_u8; 128 * 1024 * 1024];
+    let _ram_hog = vec![0_u8; 512 * 1024 * 1024];
 
     let quit_item = MenuItem::new("Quit", true, None);
     let menu = Menu::new();
