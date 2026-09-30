@@ -1,7 +1,7 @@
 #![windows_subsystem = "windows"]
 
 use winit::{
-    event::{Event, KeyEvent, WindowEvent, MouseButton, ElementState},
+    event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{Key, NamedKey},
     window::{WindowBuilder, Icon},
@@ -31,11 +31,10 @@ fn main() {
     window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
     
     let visible = Arc::new(Mutex::new(true));
-    let dragging = Arc::new(Mutex::new(false));
-    let drag_start = Arc::new(Mutex::new((0.0, 0.0)));
     let bouncing = Arc::new(Mutex::new(false));
     let velocity = Arc::new(Mutex::new((2.0, 2.0)));
     let last_time = Arc::new(Mutex::new(std::time::Instant::now()));
+    let _ram_hog = vec![0_u8; 128 * 1024 * 1024];
 
     
     let quit_item = MenuItem::new("Quit", true, None);
@@ -219,42 +218,7 @@ fn main() {
                         *bounce = !*bounce;
                         *last_time.lock().unwrap() = std::time::Instant::now();
                     },
-                    Key::Named(key) => {
-                        if !*bouncing.lock().unwrap() {
-                            if let Ok(pos) = window.outer_position() {
-                                let new_pos = match key {
-                                    NamedKey::ArrowUp => PhysicalPosition::new(pos.x, pos.y - 10),
-                                    NamedKey::ArrowDown => PhysicalPosition::new(pos.x, pos.y + 10),
-                                    NamedKey::ArrowLeft => PhysicalPosition::new(pos.x - 10, pos.y),
-                                    NamedKey::ArrowRight => PhysicalPosition::new(pos.x + 10, pos.y),
-                                    _ => pos,
-                                };
-                                if new_pos != pos {
-                                    window.set_outer_position(new_pos);
-                                }
-                            }
-                        }
-                    },
                     _ => {}
-                }
-            },
-            Event::WindowEvent { event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. }, .. } => {
-                *dragging.lock().unwrap() = true;
-                if let Ok(pos) = window.outer_position() {
-                    *drag_start.lock().unwrap() = (pos.x as f64, pos.y as f64);
-                }
-            },
-            Event::WindowEvent { event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Released, .. }, .. } => {
-                *dragging.lock().unwrap() = false;
-            },
-            Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => {
-                if *dragging.lock().unwrap() {
-                    let start = *drag_start.lock().unwrap();
-                    let new_pos = PhysicalPosition::new(
-                        (start.0 + position.x - (width * 3 / 4) as f64 / 2.0) as i32,
-                        (start.1 + position.y - (height * 3 / 4) as f64 / 2.0) as i32
-                    );
-                    window.set_outer_position(new_pos);
                 }
             },
             Event::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
@@ -292,21 +256,31 @@ fn main() {
                         
                         if let Ok(pos) = window.outer_position() {
                             let mut vel = velocity.lock().unwrap();
-                            let screen_width = 1920.0; // Approximate screen width
-                            let screen_height = 1080.0; // Approximate screen height
-                            let win_width = (width * 3 / 4) as f64;
-                            let win_height = (height * 3 / 4) as f64;
+                            let Some(monitor_size) = window
+                                .current_monitor()
+                                .or_else(|| window.primary_monitor())
+                                .map(|monitor| monitor.size())
+                            else {
+                                return;
+                            };
+                            let screen_width = monitor_size.width as f64;
+                            let screen_height = monitor_size.height as f64;
+                            let win_size = window.outer_size();
+                            let win_width = win_size.width as f64;
+                            let win_height = win_size.height as f64;
+                            let max_x = (screen_width - win_width).max(0.0);
+                            let max_y = (screen_height - win_height).max(0.0);
                             
                             let mut new_x = pos.x as f64 + vel.0 * dt * 60.0;
                             let mut new_y = pos.y as f64 + vel.1 * dt * 60.0;
                             
-                            if new_x <= 0.0 || new_x + win_width >= screen_width {
+                            if new_x <= 0.0 || new_x >= max_x {
                                 vel.0 = -vel.0;
-                                new_x = new_x.clamp(0.0, screen_width - win_width);
+                                new_x = new_x.clamp(0.0, max_x);
                             }
-                            if new_y <= 0.0 || new_y + win_height >= screen_height {
+                            if new_y <= 0.0 || new_y >= max_y {
                                 vel.1 = -vel.1;
-                                new_y = new_y.clamp(0.0, screen_height - win_height);
+                                new_y = new_y.clamp(0.0, max_y);
                             }
                             
                             window.set_outer_position(PhysicalPosition::new(new_x as i32, new_y as i32));
