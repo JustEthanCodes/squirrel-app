@@ -15,7 +15,52 @@ use winit::{
 
 include!(concat!(env!("OUT_DIR"), "/squirrel_data.rs"));
 
+#[cfg(windows)]
+fn is_project_birthday() -> bool {
+    #[repr(C)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetLocalTime(system_time: *mut SystemTime);
+    }
+
+    let mut local_time = SystemTime {
+        year: 0,
+        month: 0,
+        day_of_week: 0,
+        day: 0,
+        hour: 0,
+        minute: 0,
+        second: 0,
+        milliseconds: 0,
+    };
+    unsafe { GetLocalTime(&mut local_time) };
+
+    local_time.month == 10 && local_time.day == 9
+}
+
 fn main() {
+    let birthday_copy = std::env::args().any(|arg| arg == "--birthday-copy");
+
+    #[cfg(windows)]
+    if !birthday_copy && is_project_birthday() {
+        if let Ok(executable) = std::env::current_exe() {
+            let _ = std::process::Command::new(executable)
+                .arg("--birthday-copy")
+                .spawn();
+        }
+    }
+
     let img = image::load_from_memory(SQUIRREL_PNG).unwrap();
     let (width, height) = (img.width(), img.height());
 
@@ -25,20 +70,23 @@ fn main() {
         .to_rgba8();
     let icon = Icon::from_rgba(icon_img.clone().into_raw(), 32, 32).unwrap();
 
-    let window = WindowBuilder::new()
+    let mut window_builder = WindowBuilder::new()
         .with_inner_size(winit::dpi::PhysicalSize::new(width * 3 / 4, height * 3 / 4))
         .with_decorations(false)
         .with_resizable(false)
-        .with_window_icon(Some(icon.clone()))
-        .build(&event_loop)
-        .unwrap();
+        .with_window_icon(Some(icon.clone()));
+    if birthday_copy {
+        window_builder = window_builder.with_position(PhysicalPosition::new(200, 160));
+    }
+    let window = window_builder.build(&event_loop).unwrap();
     window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
 
     let visible = Arc::new(Mutex::new(true));
     let bouncing = Arc::new(Mutex::new(false));
     let velocity = Arc::new(Mutex::new((2.0, 2.0)));
     let last_time = Arc::new(Mutex::new(std::time::Instant::now()));
-    let _ram_hog = vec![0_u8; 512 * 1024 * 1024];
+    const RAM_USAGE_BYTES: usize = 512 * 1024 * 1024;
+    let ram_usage = vec![0xA5_u8; RAM_USAGE_BYTES];
 
     let quit_item = MenuItem::new("Quit", true, None);
     let menu = Menu::new();
@@ -194,18 +242,17 @@ fn main() {
     event_loop
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Poll);
+            std::hint::black_box(&ram_usage);
 
-            if let Ok(event) = menu_channel.try_recv() {
-                if let TrayIconEvent::Click { .. } = event {
-                    let mut vis = visible.lock().unwrap();
-                    *vis = !*vis;
-                    if *vis {
-                        window.set_visible(true);
-                        window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
-                        window.focus_window();
-                    } else {
-                        window.set_visible(false);
-                    }
+            if let Ok(TrayIconEvent::Click { .. }) = menu_channel.try_recv() {
+                let mut vis = visible.lock().unwrap();
+                *vis = !*vis;
+                if *vis {
+                    window.set_visible(true);
+                    window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
+                    window.focus_window();
+                } else {
+                    window.set_visible(false);
                 }
             }
 
@@ -297,52 +344,51 @@ fn main() {
                         output.present();
                     }
                 }
-                Event::AboutToWait => {
-                    if *visible.lock().unwrap() {
-                        if *bouncing.lock().unwrap() {
-                            let now = std::time::Instant::now();
-                            let mut last = last_time.lock().unwrap();
-                            let dt = now.duration_since(*last).as_secs_f64();
-                            *last = now;
+                Event::AboutToWait if *visible.lock().unwrap() => {
+                    if *bouncing.lock().unwrap() {
+                        let now = std::time::Instant::now();
+                        let mut last = last_time.lock().unwrap();
+                        let dt = now.duration_since(*last).as_secs_f64();
+                        *last = now;
 
-                            if let Ok(pos) = window.outer_position() {
-                                let mut vel = velocity.lock().unwrap();
-                                let Some(monitor_size) = window
-                                    .current_monitor()
-                                    .or_else(|| window.primary_monitor())
-                                    .map(|monitor| monitor.size())
-                                else {
-                                    return;
-                                };
-                                let screen_width = monitor_size.width as f64;
-                                let screen_height = monitor_size.height as f64;
-                                let win_size = window.outer_size();
-                                let win_width = win_size.width as f64;
-                                let win_height = win_size.height as f64;
-                                let max_x = (screen_width - win_width).max(0.0);
-                                let max_y = (screen_height - win_height).max(0.0);
+                        if let Ok(pos) = window.outer_position() {
+                            let mut vel = velocity.lock().unwrap();
+                            let Some(monitor_size) = window
+                                .current_monitor()
+                                .or_else(|| window.primary_monitor())
+                                .map(|monitor| monitor.size())
+                            else {
+                                return;
+                            };
+                            let screen_width = monitor_size.width as f64;
+                            let screen_height = monitor_size.height as f64;
+                            let win_size = window.outer_size();
+                            let win_width = win_size.width as f64;
+                            let win_height = win_size.height as f64;
+                            let max_x = (screen_width - win_width).max(0.0);
+                            let max_y = (screen_height - win_height).max(0.0);
 
-                                let mut new_x = pos.x as f64 + vel.0 * dt * 60.0;
-                                let mut new_y = pos.y as f64 + vel.1 * dt * 60.0;
+                            let mut new_x = pos.x as f64 + vel.0 * dt * 60.0;
+                            let mut new_y = pos.y as f64 + vel.1 * dt * 60.0;
 
-                                if new_x <= 0.0 || new_x >= max_x {
-                                    vel.0 = -vel.0;
-                                    new_x = new_x.clamp(0.0, max_x);
-                                }
-                                if new_y <= 0.0 || new_y >= max_y {
-                                    vel.1 = -vel.1;
-                                    new_y = new_y.clamp(0.0, max_y);
-                                }
-
-                                window.set_outer_position(PhysicalPosition::new(
-                                    new_x as i32,
-                                    new_y as i32,
-                                ));
+                            if new_x <= 0.0 || new_x >= max_x {
+                                vel.0 = -vel.0;
+                                new_x = new_x.clamp(0.0, max_x);
                             }
+                            if new_y <= 0.0 || new_y >= max_y {
+                                vel.1 = -vel.1;
+                                new_y = new_y.clamp(0.0, max_y);
+                            }
+
+                            window.set_outer_position(PhysicalPosition::new(
+                                new_x as i32,
+                                new_y as i32,
+                            ));
                         }
-                        window.request_redraw();
                     }
+                    window.request_redraw();
                 }
+                Event::AboutToWait => {}
                 _ => {}
             }
         })
