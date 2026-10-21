@@ -1,0 +1,48 @@
+name: Build macOS executables
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - os: macos-26-intel
+            architecture: x86_64
+            target: x86_64-apple-darwin
+          - os: macos-26
+            architecture: arm64
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    name: macOS ${{ matrix.architecture }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build release executables
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+
+      - name: Upload release executables
+        uses: actions/upload-artifact@v4
+        with:
+          name: bradley-macos-${{ matrix.architecture }}
+          path: |
+            target/${{ matrix.target }}/release/bradley
+            target/${{ matrix.target }}/release/please
+          if-no-files-found: error

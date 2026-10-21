@@ -1,5 +1,14 @@
 # Changelog
 
+## Version 3.1
+
+### Beta 1
+
+-  Added Linux and MacOS support
+  - Is very experimental
+- Added Windows ARM support
+  - Also very experimental
+
 ## Version 3.0
 
 NOTE: Bradley is now a year old! Wow, 365 days of being annoying...

@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use std::sync::{Arc, Mutex};
 use tray_icon::{
@@ -7,7 +7,7 @@ use tray_icon::{
 };
 use winit::{
     dpi::PhysicalPosition,
-    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event::{ElementState, Event, KeyEvent, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{Key, NamedKey},
     window::{Icon, WindowBuilder},
@@ -49,10 +49,19 @@ fn is_project_birthday() -> bool {
     local_time.month == 10 && local_time.day == 9
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn is_project_birthday() -> bool {
+    let Ok(output) = std::process::Command::new("date").arg("+%m-%d").output() else {
+        return false;
+    };
+
+    output.status.success() && output.stdout.starts_with(b"10-09")
+}
+
 fn main() {
     let birthday_copy = std::env::args().any(|arg| arg == "--birthday-copy");
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     if !birthday_copy && is_project_birthday() {
         if let Ok(executable) = std::env::current_exe() {
             let _ = std::process::Command::new(executable)
@@ -92,11 +101,9 @@ fn main() {
     let menu = Menu::new();
     menu.append(&quit_item).unwrap();
 
-    let _tray_icon = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_icon(tray_icon::Icon::from_rgba(icon_img.into_raw(), 32, 32).unwrap())
-        .build()
-        .unwrap();
+    let mut menu = Some(menu);
+    let mut tray_icon_data = Some(tray_icon::Icon::from_rgba(icon_img.into_raw(), 32, 32).unwrap());
+    let mut _tray_icon = None;
 
     let menu_channel = TrayIconEvent::receiver();
     let menu_event_channel = MenuEvent::receiver();
@@ -243,6 +250,16 @@ fn main() {
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Poll);
             std::hint::black_box(&ram_usage);
+
+            if let Event::NewEvents(StartCause::Init) = &event {
+                _tray_icon = Some(
+                    TrayIconBuilder::new()
+                        .with_menu(Box::new(menu.take().unwrap()))
+                        .with_icon(tray_icon_data.take().unwrap())
+                        .build()
+                        .unwrap(),
+                );
+            }
 
             if let Ok(TrayIconEvent::Click { .. }) = menu_channel.try_recv() {
                 let mut vis = visible.lock().unwrap();

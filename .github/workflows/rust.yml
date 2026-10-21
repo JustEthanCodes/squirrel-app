@@ -11,11 +11,22 @@ env:
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            architecture: x86_64
+          - os: ubuntu-24.04-arm
+            architecture: aarch64
+    runs-on: ${{ matrix.os }}
+    name: Build and test (${{ matrix.architecture }})
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install Linux system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libgtk-3-dev libxdo-dev libappindicator3-dev
     - name: Build
       run: cargo build --verbose
     - name: Run tests

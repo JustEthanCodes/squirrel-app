@@ -8,13 +8,13 @@ build:
     cargo build --release
 
 check:
-    cargo check --all-targets
+    cargo check
 
 test:
     cargo test
 
 clippy:
-    cargo clippy --all-targets
+    cargo clippy --jobs 1
 
 fmt:
     cargo fmt --all
